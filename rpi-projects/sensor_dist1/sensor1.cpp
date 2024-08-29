@@ -23,16 +23,22 @@ class HCSR04
 class RangeFinder
 {
     public:
-        RangeFinder(HCSR04& h);    
+        RangeFinder();    
+        ~RangeFinder();
         // Determines whether an object lies within the specified range and if so, calls the listener. 
-        bool isObjectInRange(int minDist, int maxDist, uint32_t duration, const std::function<void(double)> &f);
-    
+        bool isObjectInRange(int minDist, int maxDist, uint32_t duration, const std::function<void(double)> &f); 
+
     private:
-	    HCSR04& myHCSR04;
+	   HCSR04* myHCSR04;
 };
 
-RangeFinder::RangeFinder(HCSR04& h) : myHCSR04(h){
+RangeFinder::RangeFinder():myHCSR04(null) {
+    myHCSR04 = new HCSR04(4, 23);
 } 
+
+RangeFinder::~RangeFinder() {
+    delete myHCSR04;
+}
 
 
 bool RangeFinder::isObjectInRange(int minDist, int maxDist, uint32_t duration, const std::function<void(double)> &f){
@@ -43,7 +49,7 @@ bool RangeFinder::isObjectInRange(int minDist, int maxDist, uint32_t duration, c
         uint32_t endTick = 0;
         double distance = 0.0;
         do {
-            distance = myHCSR04.getDistance();
+            distance = myHCSR04->getDistance();
             if ((minDist < distance) && (distance < maxDist)){
                 f(distance);
             }
@@ -141,7 +147,6 @@ void HCSR04::initialize(int trigger, int echo) {
 int main() 
 {
 
-    HCSR04 mySensor(4, 23);
 
 /*
     double objDistance = 0.0;
@@ -156,7 +161,7 @@ int main()
 
 */
 
-    RangeFinder myRangeFinder(mySensor);
+    RangeFinder myRangeFinder;
     FunctionObject myFunctionObject;
     if (myRangeFinder.isObjectInRange(0, 500, 100000000, myFunctionObject) == false) {
         std::cout << "Invalid maximum and minimum distances.\n";
