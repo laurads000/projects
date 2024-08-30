@@ -20,4 +20,4 @@ sensor1.o : rangefinder.h
 	$(CXX) -c $(CXXFLAGS) $< -o $@
 
 clean:
-    rm -f *.o
+	rm -f *.o
