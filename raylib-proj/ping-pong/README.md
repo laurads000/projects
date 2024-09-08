@@ -6,7 +6,5 @@ It works with raylib version 4.5.
 
 <br>
 <br>
-<p align="center">
-| 
-</p>
+
 
