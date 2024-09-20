@@ -8,7 +8,6 @@
 
 // PROBLEMS:
 // - snake can change direction on a point
-// - use constants
 // - what order should member functions be
 // - change direction and eat fruit in same square
 
@@ -21,9 +20,12 @@
 #include <array>
 
 // constansts and global variables
-const int squareLength = 50;
-Color lightGreen{72, 111, 56, 255};
-Color sheerGrey{96,96,96, 100};
+const int SQUARE_LENGTH = 50;
+const int BOARD_WIDTH = 1200;
+const int BOARD_HEIGHT = 650;
+Color lightGreen{121, 208, 33, 255};
+Color darkGreen{55, 174, 15, 255};
+Color sheerGrey{96, 96, 96, 100};
 bool isGameStarted = true;
 
 // to print vectors
@@ -50,7 +52,7 @@ class Snake {
         Vector2 m_Head;
         Vector2 m_Tail;
         int m_SegmentCount;
-        std::vector<Vector2> m_Points;   // stores each end of each segment in the snake
+        std::vector<Vector2> m_Points;   // stores end of each segment in the snake
         bool turnRight;
         bool turnLeft;
         bool turnUp;
@@ -78,6 +80,7 @@ class Board {
         Board(int w, int h);
         void setHeight(int h);
         void setWidth(int w);
+        int getWidth();
         int getHeight();
         void drawBoard();
 };
@@ -95,9 +98,11 @@ class Fruit {
         bool fruitCollision(Snake s);
 };
 
+// Fruit constructor
 Fruit::Fruit(Vector2 l, Snake& s) : m_Location(l), m_Snake(s) {
 }
 
+// draws Fruit
 void Fruit::drawFruit() {
     DrawCircle(m_Location.x, m_Location.y, 20.0, RED);
 }
@@ -110,20 +115,22 @@ Vector2 Fruit::getLocation() {
 // sets random location of fruit
 void Fruit::setLocation(){
     
+    const int xSquareNum = BOARD_WIDTH/SQUARE_LENGTH;   // number of gameboard squares across
+    const int ySqaureNum = BOARD_HEIGHT/SQUARE_LENGTH;  // number of gameboard squares vertically 
 
-    std::array<int, 24> possibleX;      // board dimensions: 24 across x 13 down squares
-    std::array<int, 13> possibleY;     
+    std::array<int, xSquareNum> possibleX;      
+    std::array<int, ySqaureNum> possibleY;     
 
-    for(int i=0;i<24;i++) {
-        possibleX[i] = 75 + (i*50); 
+    for(int i=0;i<xSquareNum;i++) {
+        possibleX[i] = 75 + (i*SQUARE_LENGTH); 
     }
-    for(int i=0;i<13;i++) {
-        possibleY[i] = 125 + (i*50);
+    for(int i=0;i<ySqaureNum;i++) {
+        possibleY[i] = 125 + (i*SQUARE_LENGTH);
     }
     do {    // keep assigning random locations to fruit until fruitCollision == false
         m_Location.x = (possibleX[GetRandomValue(0, possibleX.size()-1)]);
         m_Location.y = (possibleY[GetRandomValue(0, possibleY.size()-1)]);
-    } while(fruitCollision(m_Snake));
+    } while (fruitCollision(m_Snake));
 
     std::cout << "New location of fruit: " << m_Location << std::endl;
 }
@@ -315,42 +322,48 @@ Board::Board(int w, int h) : m_Width(w), m_Height(h) {
 // draws gameboard 
 void Board::drawBoard() {
     bool shiftDown = false;
-    DrawRectangle(squareLength, 100, m_Width, m_Height, lightGreen);
+    DrawRectangle(SQUARE_LENGTH, 100, m_Width, m_Height, lightGreen);
     
-    for (int i=squareLength; i<(m_Width + squareLength);i += squareLength){    // x position
+    for (int i=SQUARE_LENGTH; i<(m_Width + SQUARE_LENGTH);i += SQUARE_LENGTH){    // x position
         if(shiftDown) {
-            for(int j = (100 + squareLength); j<(m_Height+100); j += (squareLength*2)) {    // y position
-            DrawRectangle(i, j, squareLength, squareLength, GREEN);
+            for(int j = (100 + SQUARE_LENGTH); j<(m_Height+100); j += (SQUARE_LENGTH*2)) {    // y position
+            DrawRectangle(i, j, SQUARE_LENGTH, SQUARE_LENGTH, darkGreen);
             } 
         } else {
-            for(int j = 100; j<(m_Height+100); j += (squareLength*2)) {    // y position
-                DrawRectangle(i, j, squareLength, squareLength, GREEN);
+            for(int j = 100; j<(m_Height+100); j += (SQUARE_LENGTH*2)) {    // y position
+                DrawRectangle(i, j, SQUARE_LENGTH, SQUARE_LENGTH, darkGreen);
             }
         }
         shiftDown = !shiftDown;
     }
-    DrawRectangleLines(squareLength, 100, m_Width, m_Height, BROWN);
+    DrawRectangleLines(SQUARE_LENGTH, 100, m_Width, m_Height, BROWN);
 }
 
+int Board::getHeight() {
+    return m_Height;
+}
 
+int Board::getWidth() {
+    return m_Width;
+}
 
 int main () {
-    const int screenWidth = 1300;
-    const int screenHeight = 800;
+    const int SCREEN_WIDTH = 1300;
+    const int SCREEN_HEIGHT = 800;
 
     int score = 0;
 
-    InitWindow(screenWidth, screenHeight, "Snake Game");
-    SetTargetFPS(80); // speed of game, frames per second
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Snake Game");
+    SetTargetFPS(100); // speed of game, frames per second
     std::vector<Vector2> snakePoints;
 
-    snakePoints.push_back({575.0f, 375.0f});                    // FIX THIS LATER
+    // starting position of the snake 
+    snakePoints.push_back({575.0f, 375.0f});                
     snakePoints.push_back({175.0f, 375.0f});
-    snakePoints.push_back({175.0f, 325.0f});
 
-    Snake snake(snakePoints[0], snakePoints[2],  snakePoints);  // FIX THIS
+    Snake snake(snakePoints[0], snakePoints[1],  snakePoints);  
 
-    Board gameBoard(1200, 650);
+    Board gameBoard(BOARD_WIDTH, BOARD_HEIGHT);
 
     Fruit fruit({975.0f, 375.0f}, snake);
 
@@ -371,7 +384,7 @@ int main () {
         // check for eating fruit
         if(snake.eatFruit(fruit.getLocation())) {
             std::cout << "fruit if\n";
-            fruit.setLocation();
+            fruit.setLocation();                // FIX THIS, pass in dimensions of board
             score++;
         }
         // check for collision
@@ -381,7 +394,7 @@ int main () {
 
         // update game objects
         snake.UpdateSnake();
-        std::cout << "snake updated\n";
+        // std::cout << "snake updated\n";
 
 
 
