@@ -6,6 +6,8 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from gestures.numbers import FingerHoldTracker, count_all_fingers_up
+
 MODEL_PATH = Path(__file__).resolve().parent / "hand_landmarker.task"
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
@@ -46,6 +48,7 @@ def main() -> None:
         min_hand_detection_confidence=0.7,
     )
     detector = vision.HandLandmarker.create_from_options(options)
+    hold_tracker = FingerHoldTracker(hold_seconds=3.0)
 
     cap = cv2.VideoCapture(1)
     frame_timestamp_ms = 0
@@ -63,6 +66,25 @@ def main() -> None:
 
             if result.hand_landmarks:
                 draw_hand_landmarks(frame, result.hand_landmarks)
+                finger_count = count_all_fingers_up(
+                    result.hand_landmarks,
+                    result.handedness,
+                )
+                confirmed = hold_tracker.update(finger_count)
+                if confirmed is not None:
+                    print(confirmed)
+
+                cv2.putText(
+                    frame,
+                    f"fingers: {finger_count}",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                )
+            else:
+                hold_tracker.update(None)
 
             cv2.imshow("Hand demo", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
