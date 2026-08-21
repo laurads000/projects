@@ -1,29 +1,13 @@
-"""Count raised fingers from MediaPipe hand landmarks.
+"""Count raised fingers using Hand / Finger wrappers."""
 
-Normalized landmark coords: (0, 0) is the top-left of the image,
-x increases right, y increases down. Values are in [0, 1].
-"""
-#logic: count fingers up if tip.y < pip.y
-# ** thumb: 
 from __future__ import annotations
 
 import math
 import time
 from typing import Optional, Sequence
 
-# MediaPipe hand landmark indices
-_THUMB_CMC = 1  # base of thumb
-_THUMB_MCP = 2  # next thumb joint
-_THUMB_IP = 3
-_THUMB_TIP = 4
-_INDEX_MCP = 5  # index knuckle
-_FINGER_TIPS = (8, 12, 16, 20)  # index, middle, ring, pinky
-_FINGER_PIPS = (6, 10, 14, 18)
+from gesture_recognizer.hand_wrapper import Hand, hands_from_result
 
-# Thumb is "up" only if all pass:
-# 1) abduction angle at CMC (CMC→MCP vs CMC→index knuckle)
-# 2) extension: tip farther from CMC than MCP is (MCP vs CMC length)
-# 3) tip.y < IP.y (same tip-above-joint idea as other fingers; IP ≈ PIP)
 _THUMB_ABDUCTION_DEG = 30.0
 
 
@@ -44,66 +28,56 @@ def _dist(a, b) -> float:
     return math.hypot(a.x - b.x, a.y - b.y)
 
 
-def _thumb_is_up(landmarks: Sequence) -> bool:
-    cmc = landmarks[_THUMB_CMC]
-    mcp = landmarks[_THUMB_MCP]
-    ip = landmarks[_THUMB_IP]
-    tip = landmarks[_THUMB_TIP]
-    index_mcp = landmarks[_INDEX_MCP]
+def _thumb_is_up(hand: Hand) -> bool:
+    thumb = hand.thumb
+    assert thumb.cmc is not None and thumb.pip is not None
+    cmc, mcp, ip, tip = thumb.cmc, thumb.mcp, thumb.pip, thumb.tip
+    index_mcp = hand.index.mcp
 
     # 1) Angle at CMC between next thumb joint and index knuckle.
-    abduction = _angle_deg(mcp, cmc, index_mcp)
-    if abduction < _THUMB_ABDUCTION_DEG:
+    if _angle_deg(mcp, cmc, index_mcp) < _THUMB_ABDUCTION_DEG:
         return False
 
-    # 2) MCP vs CMC: thumb extended if tip is beyond MCP from the CMC base.
+    # 2) MCP vs CMC: tip beyond MCP from CMC base.
     if _dist(cmc, tip) <= _dist(cmc, mcp):
         return False
 
-    # 3) Tip above IP (thumb's PIP equivalent); y grows downward.
+    # 3) Tip above IP (y grows downward).
     if tip.y >= ip.y:
         return False
 
     return True
 
 
-def count_fingers_up(
-    landmarks: Sequence,
-    handedness: Optional[str] = None,
-) -> int:
+def count_fingers_up(hand: Hand) -> int:
     """Return how many fingers are extended (0–5) for one hand."""
-    _ = handedness  # kept for call-site compatibility; thumb no longer uses it
     tips_up = 0
 
-    if _thumb_is_up(landmarks):
+    if _thumb_is_up(hand):
         tips_up += 1
 
-    # Other fingers: tip above PIP in image coords (y grows downward).
-    for tip_idx, pip_idx in zip(_FINGER_TIPS, _FINGER_PIPS):
-        if landmarks[tip_idx].y < landmarks[pip_idx].y:
+    for finger in (hand.index, hand.middle, hand.ring, hand.pinky):
+        if finger.pip is not None and finger.tip.y < finger.pip.y:
             tips_up += 1
 
     return tips_up
 
 
-def count_all_fingers_up(
+def count_all_fingers_up(hands: Sequence[Hand]) -> int:
+    """Sum raised fingers across all detected hands."""
+    return sum(count_fingers_up(hand) for hand in hands)
+
+
+def count_all_fingers_up_from_landmarks(
     hand_landmarks_list: Sequence,
     handedness_list: Optional[Sequence] = None,
 ) -> int:
-    """Sum raised fingers across all detected hands."""
-    total = 0
-    for i, landmarks in enumerate(hand_landmarks_list):
-        label = None
-        if handedness_list is not None and i < len(handedness_list):
-            categories = handedness_list[i]
-            if categories:
-                label = categories[0].category_name
-        total += count_fingers_up(landmarks, label)
-    return total
+    """Convenience: MediaPipe landmark lists → finger count."""
+    return count_all_fingers_up(hands_from_result(hand_landmarks_list, handedness_list))
 
 
 class FingerHoldTracker:
-    """Emit a finger count once it has been held steady for ``hold_seconds``."""
+    """Emit a value once it has been held steady for ``hold_seconds``."""
 
     def __init__(self, hold_seconds: float = 3.0) -> None:
         self.hold_seconds = hold_seconds

@@ -6,7 +6,9 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-from gestures.numbers import FingerHoldTracker, count_all_fingers_up
+from gesture_recognizer.hand_wrapper import hands_from_result
+from gesture_recognizer.numbers import FingerHoldTracker, count_all_fingers_up
+from jjk_gestures.domain_expansion import any_hand_infinite_void
 
 MODEL_PATH = Path(__file__).resolve().parent / "hand_landmarker.task"
 MODEL_URL = (
@@ -49,6 +51,7 @@ def main() -> None:
     )
     detector = vision.HandLandmarker.create_from_options(options)
     hold_tracker = FingerHoldTracker(hold_seconds=3.0)
+    infinite_void_hold = FingerHoldTracker(hold_seconds=3.0)
 
     cap = cv2.VideoCapture(1)
     frame_timestamp_ms = 0
@@ -66,13 +69,18 @@ def main() -> None:
 
             if result.hand_landmarks:
                 draw_hand_landmarks(frame, result.hand_landmarks)
-                finger_count = count_all_fingers_up(
+                hands = hands_from_result(
                     result.hand_landmarks,
                     result.handedness,
                 )
+                finger_count = count_all_fingers_up(hands)
                 confirmed = hold_tracker.update(finger_count)
                 if confirmed is not None:
                     print(confirmed)
+
+                infinite_void = any_hand_infinite_void(hands)
+                if infinite_void_hold.update(1 if infinite_void else None) is not None:
+                    print("Infinite void (Gojo)")
 
                 cv2.putText(
                     frame,
@@ -83,8 +91,19 @@ def main() -> None:
                     (255, 255, 255),
                     2,
                 )
+                if infinite_void:
+                    cv2.putText(
+                        frame,
+                        "Infinite void (Gojo)",
+                        (20, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (0, 255, 255),
+                        2,
+                    )
             else:
                 hold_tracker.update(None)
+                infinite_void_hold.update(None)
 
             cv2.imshow("Hand demo", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):

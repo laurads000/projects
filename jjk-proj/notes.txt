@@ -1,0 +1,54 @@
+# JJK Domain Expansion Gesture Recognizer — Project Summary
+
+## Goal
+Recognize custom static hand poses (JJK domain seals) with a scikit-learn
+classifier on MediaPipe landmark coordinates (not raw images / CNNs).
+
+## Approach (Option A: custom landmark classifier)
+1. MediaPipe detects hand(s) → 21 landmarks per hand (x, y, z).
+2. Landmarks are normalized (wrist-origin, scaled by hand size).
+3. Feature vectors (63 per hand, 126 for two hands) train a RandomForest.
+4. Live inference uses the same normalization + confidence threshold +
+   multi-frame smoothing before confirming a gesture.
+
+## Layout
+```
+gesture_recognizer/     # shared library
+  hand_wrapper.py       # Point, Finger, Hand, hands_from_result()
+  normalize.py          # hand_to_array, normalize_hand, normalize_two_hands
+  numbers.py            # finger counting + FingerHoldTracker
+  hand_arithmetic.py    # add/sub/angle helpers
+jjk_gestures/           # JJK rule-based detectors (e.g. infinite void)
+scripts/
+  data_collection.py    # webcam → data/gestures.csv
+  train.py              # CSV → models/gesture_model.pkl
+  recognize.py          # live inference
+data/                   # gestures.csv (generated)
+models/                 # gesture_model.pkl (generated)
+main.py                 # older live demo (finger count + rule-based void)
+```
+
+## Workflow
+```
+# from project root, with venv active:
+pip install -r requirements.txt
+python scripts/data_collection.py   # keys: 1 / 2 / 0, q to quit
+python scripts/train.py
+python scripts/recognize.py
+```
+
+Collect ~150–300 samples per class; vary angle/distance/lighting.
+Always collect a large "none" class.
+
+## Artifacts
+- `data/gestures.csv` — label + 126 float columns
+- `models/gesture_model.pkl` — trained RandomForest
+
+## Known next steps
+- Joint-angle features if two seals look too similar in raw coords
+- Sequence / multi-pose seals (state machine on top of per-frame labels)
+- Optional: batch phone photos → CSV (static_image_mode), under data/images/<label>/
+- Keep one-hand and two-hand "none" samples balanced
+
+## Dependencies
+See `requirements.txt`: mediapipe, opencv-python, numpy, pandas, scikit-learn, joblib
