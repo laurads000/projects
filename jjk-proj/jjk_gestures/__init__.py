@@ -1,4 +1,4 @@
-"""Jujutsu Kaisen–specific gesture detectors."""
+"""Jujutsu Kaisen domanin expansion gesture detectors."""
 
 from jjk_gestures.domain_expansion import any_hand_infinite_void, is_infinite_void
 
