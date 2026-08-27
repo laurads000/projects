@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import sys
+import urllib.request
 from collections import deque
 from pathlib import Path
 
 import cv2
 import joblib
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -17,33 +20,69 @@ if str(ROOT) not in sys.path:
 from gesture_recognizer.hand_wrapper import hands_from_result
 from gesture_recognizer.normalize import normalize_two_hands
 
-MODEL_PATH = ROOT / "models" / "gesture_model.pkl"
+CLF_PATH = ROOT / "models" / "gesture_model.pkl"
+LANDMARKER_PATH = ROOT / "hand_landmarker.task"
+LANDMARKER_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
 CONFIDENCE_THRESHOLD = 0.85
 SMOOTHING_WINDOW = 10
 CONFIRM_FRACTION = 1.0
 
+DISPLAY_NAMES = {
+    "infinite_void": "Infinite void (Gojo)",
+    "malevolent_shrine": "Malevolent shrine (Sukuna)",
+    "none": "none",
+}
+
+
+def ensure_model() -> None:
+    if LANDMARKER_PATH.exists():
+        return
+    print(f"Downloading hand model to {LANDMARKER_PATH}...")
+    urllib.request.urlretrieve(LANDMARKER_URL, LANDMARKER_PATH)
+
+
+def draw_landmarks(frame, hand_landmarks_list) -> None:
+    height, width, _ = frame.shape
+    for landmarks in hand_landmarks_list:
+        points = [(int(lm.x * width), int(lm.y * height)) for lm in landmarks]
+        for connection in vision.HandLandmarksConnections.HAND_CONNECTIONS:
+            cv2.line(
+                frame,
+                points[connection.start],
+                points[connection.end],
+                (0, 255, 0),
+                2,
+            )
+        for point in points:
+            cv2.circle(frame, point, 3, (0, 0, 255), -1)
+
 
 def main() -> None:
-    if not MODEL_PATH.exists():
+    if not CLF_PATH.exists():
         raise SystemExit(
-            f"No model at {MODEL_PATH}. Run scripts/train.py first."
+            f"No classifier at {CLF_PATH}. Run scripts/train.py first."
         )
 
-    clf = joblib.load(MODEL_PATH)
+    ensure_model()
+    clf = joblib.load(CLF_PATH)
 
-    mp_hands = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils
+    options = vision.HandLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=str(LANDMARKER_PATH)),
+        running_mode=vision.RunningMode.VIDEO,
+        num_hands=2,
+        min_hand_detection_confidence=0.7,
+    )
+    detector = vision.HandLandmarker.create_from_options(options)
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     recent: deque[str] = deque(maxlen=SMOOTHING_WINDOW)
     confirmed_gesture = None
+    frame_timestamp_ms = 0
 
-    with mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.5,
-    ) as hands:
+    try:
         while cap.isOpened():
             ok, frame = cap.read()
             if not ok:
@@ -51,20 +90,18 @@ def main() -> None:
 
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            result = hands.process(rgb)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result = detector.detect_for_video(mp_image, frame_timestamp_ms)
+            frame_timestamp_ms += 33
 
             current_label = "none"
             current_conf = 0.0
 
-            if result.multi_hand_landmarks:
-                for hand_lms in result.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(
-                        frame, hand_lms, mp_hands.HAND_CONNECTIONS
-                    )
-
+            if result.hand_landmarks:
+                draw_landmarks(frame, result.hand_landmarks)
                 hand_objs = hands_from_result(
-                    [h.landmark for h in result.multi_hand_landmarks],
-                    result.multi_handedness,
+                    result.hand_landmarks,
+                    result.handedness,
                 )
                 features = normalize_two_hands(hand_objs).reshape(1, -1)
 
@@ -88,9 +125,10 @@ def main() -> None:
                 else:
                     confirmed_gesture = None
 
+            display = DISPLAY_NAMES.get(current_label, current_label)
             cv2.putText(
                 frame,
-                f"Frame: {current_label} ({current_conf:.2f})",
+                f"Frame: {display} ({current_conf:.2f})",
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
@@ -98,9 +136,12 @@ def main() -> None:
                 2,
             )
             if confirmed_gesture:
+                confirmed_display = DISPLAY_NAMES.get(
+                    confirmed_gesture, confirmed_gesture
+                )
                 cv2.putText(
                     frame,
-                    f"CONFIRMED: {confirmed_gesture}",
+                    f"CONFIRMED: {confirmed_display}",
                     (10, 65),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.9,
@@ -111,13 +152,15 @@ def main() -> None:
             cv2.imshow("Gesture Recognition", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-
-    cap.release()
-    cv2.destroyAllWindows()
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        detector.close()
 
 
 def on_gesture_confirmed(label: str) -> None:
-    print(f">>> Gesture confirmed: {label}")
+    display = DISPLAY_NAMES.get(label, label)
+    print(f">>> Gesture confirmed: {display}")
 
 
 if __name__ == "__main__":

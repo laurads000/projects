@@ -1,25 +1,30 @@
-"""Interactive training-data collector.
+"""Interactive training-data collector (HandLandmarker Tasks API).
 
 Hold a pose and press the matching key each frame you want saved.
 Move your hand slightly between samples (angle, distance, position).
 
-Controls:
-  1  -> infinite_void
-  2  -> domain_expansion_2   (rename in KEY_LABELS as needed)
-  0  -> none (required negative class)
-  q  -> quit
+The KEY you press is how you tell the program which gesture you're teaching.
+You do the Infinite Void hand sign → hold/press 1. Sukuna's seal → press 2.
+Ordinary hands (not a domain seal) → press 0 ("none").
 
-Always collect plenty of "none" — resting, pointing, talking with hands, etc.
+Controls:
+  1  -> infinite_void       (Gojo)
+  2  -> malevolent_shrine   (Sukuna)
+  0  -> none                (not a special gesture — required!)
+  q  -> quit
 """
 
 from __future__ import annotations
 
 import csv
 import sys
+import urllib.request
 from pathlib import Path
 
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -29,12 +34,31 @@ from gesture_recognizer.hand_wrapper import hands_from_result
 from gesture_recognizer.normalize import TWO_HAND_DIM, normalize_two_hands
 
 OUTPUT_CSV = ROOT / "data" / "gestures.csv"
+MODEL_PATH = ROOT / "hand_landmarker.task"
+MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
 
+# Keyboard → class name stored in gestures.csv / learned by the model
 KEY_LABELS = {
     ord("1"): "infinite_void",
-    ord("2"): "domain_expansion_2",
+    ord("2"): "malevolent_shrine",
     ord("0"): "none",
 }
+
+DISPLAY_NAMES = {
+    "infinite_void": "Infinite void (Gojo)",
+    "malevolent_shrine": "Malevolent shrine (Sukuna)",
+    "none": "none (not a seal)",
+}
+
+
+def ensure_model() -> None:
+    if MODEL_PATH.exists():
+        return
+    print(f"Downloading hand model to {MODEL_PATH}...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 
 def ensure_csv_header() -> None:
@@ -52,21 +76,39 @@ def append_sample(label: str, features) -> None:
         writer.writerow([label] + features.tolist())
 
 
+def draw_landmarks(frame, hand_landmarks_list) -> None:
+    height, width, _ = frame.shape
+    for landmarks in hand_landmarks_list:
+        points = [(int(lm.x * width), int(lm.y * height)) for lm in landmarks]
+        for connection in vision.HandLandmarksConnections.HAND_CONNECTIONS:
+            cv2.line(
+                frame,
+                points[connection.start],
+                points[connection.end],
+                (0, 255, 0),
+                2,
+            )
+        for point in points:
+            cv2.circle(frame, point, 3, (0, 0, 255), -1)
+
+
 def main() -> None:
+    ensure_model()
     ensure_csv_header()
 
-    mp_hands = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils
+    options = vision.HandLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=str(MODEL_PATH)),
+        running_mode=vision.RunningMode.VIDEO,
+        num_hands=2,
+        min_hand_detection_confidence=0.7,
+    )
+    detector = vision.HandLandmarker.create_from_options(options)
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     counts = {label: 0 for label in KEY_LABELS.values()}
+    frame_timestamp_ms = 0
 
-    with mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.5,
-    ) as hands:
+    try:
         while cap.isOpened():
             ok, frame = cap.read()
             if not ok:
@@ -74,22 +116,20 @@ def main() -> None:
 
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            result = hands.process(rgb)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result = detector.detect_for_video(mp_image, frame_timestamp_ms)
+            frame_timestamp_ms += 33
 
             active_label = None
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
 
-            if result.multi_hand_landmarks:
-                for hand_lms in result.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(
-                        frame, hand_lms, mp_hands.HAND_CONNECTIONS
-                    )
-
+            if result.hand_landmarks:
+                draw_landmarks(frame, result.hand_landmarks)
                 hand_objs = hands_from_result(
-                    [h.landmark for h in result.multi_hand_landmarks],
-                    result.multi_handedness,
+                    result.hand_landmarks,
+                    result.handedness,
                 )
 
                 if key in KEY_LABELS:
@@ -100,20 +140,30 @@ def main() -> None:
 
             y = 30
             for label, count in counts.items():
+                title = DISPLAY_NAMES.get(label, label)
                 cv2.putText(
                     frame,
-                    f"{label}: {count}",
+                    f"{title}: {count}",
                     (10, y),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
+                    0.6,
                     (0, 255, 0),
                     2,
                 )
                 y += 25
+            cv2.putText(
+                frame,
+                "1=Gojo void  2=Sukuna shrine  0=none  q=quit",
+                (10, frame.shape[0] - 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                1,
+            )
             if active_label:
                 cv2.putText(
                     frame,
-                    f"SAVED: {active_label}",
+                    f"SAVED: {DISPLAY_NAMES.get(active_label, active_label)}",
                     (10, y + 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
@@ -122,9 +172,11 @@ def main() -> None:
                 )
 
             cv2.imshow("Data Collection - press label keys, q to quit", frame)
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        detector.close()
 
-    cap.release()
-    cv2.destroyAllWindows()
     print("Final counts:", counts)
     print(f"Saved to {OUTPUT_CSV}")
 
